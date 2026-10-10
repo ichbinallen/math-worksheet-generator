@@ -3,6 +3,11 @@
 Generate random arithmetic worksheets (addition, subtraction, multiplication,
 division) with an answer key.
 
+![A page of 100 addition problems in a 10x10 grid, with Name, Date and Score fields](docs/images/example-worksheet.png)
+
+*Page 1 of `uv run math-worksheet --rows 10 --cols 10 --seed 42 -o worksheet.pdf`
+(page 2 is the answer key).*
+
 ## CLI
 
 ```sh
