@@ -5,9 +5,9 @@ import sys
 import pytest
 from pypdf import PdfReader
 
-from math_worksheet import Operation, generate_problem_list
+from math_worksheet import Operation, generate_problem_list, generate_worksheets
 from math_worksheet.cli import main
-from math_worksheet.pdf import write_pdf
+from math_worksheet.pdf import write_pdf, write_worksheets_pdf
 
 ALL_OPS = list(Operation)
 
@@ -167,3 +167,79 @@ def test_cli_reports_how_many_columns_fit(tmp_path, capsys):
     fit = int(re.search(r"at most (\d+) fit", err).group(1))
     # the suggested column count really does fit
     assert main([*argv, "--rows", "10", "--cols", str(fit), "-o", str(tmp_path / "ok.pdf")]) == 0
+
+
+def test_batch_puts_all_worksheets_before_all_answer_keys(tmp_path):
+    sheets = generate_worksheets(3, [Operation.MUL], count=10, min_value=11, max_value=99, seed=0)
+    out = tmp_path / "batch.pdf"
+    assert write_worksheets_pdf(sheets, out, rows=5, cols=2, layout="inline") == 6
+    pages = _pages(out)
+    for n, problems in enumerate(sheets, start=1):
+        sheet, key = pages[n - 1], pages[n + 2]
+        assert f"Math Worksheet #{n}" in sheet and "Name:" in sheet and "Answer Key" not in sheet
+        assert f"Math Worksheet #{n} — Answer Key" in key
+        for p in problems:
+            assert p.question in sheet and p.question in key
+            assert str(p.answer) in key and str(p.answer) not in sheet
+    assert set(PdfReader(out).get_fields()) == {"score_1", "score_2", "score_3"}
+
+
+def test_batch_score_on_first_page_of_each_worksheet(tmp_path):
+    sheets = generate_worksheets(2, [Operation.ADD], count=30, seed=0)
+    out = tmp_path / "batch.pdf"
+    assert write_worksheets_pdf(sheets, out, rows=5, cols=4) == 8
+    pages = _pages(out)
+    assert [i for i, text in enumerate(pages) if "Score:" in text] == [0, 2]
+    assert [i for i, text in enumerate(pages) if "Answer Key" in text] == [4, 5, 6, 7]
+    assert "Page 8 of 8" in pages[7]
+
+
+def test_batch_without_answers(tmp_path):
+    sheets = generate_worksheets(4, count=20, seed=0)
+    out = tmp_path / "batch.pdf"
+    assert write_worksheets_pdf(sheets, out, rows=5, cols=4, answers=False) == 4
+    assert not any("Answer Key" in text for text in _pages(out))
+
+
+@pytest.mark.parametrize("worksheets", [[], [generate_problem_list(count=3), []]])
+def test_batch_rejects_empty_worksheets(tmp_path, worksheets):
+    with pytest.raises(ValueError, match="no problems"):
+        write_worksheets_pdf(worksheets, tmp_path / "w.pdf")
+
+
+def test_single_worksheet_has_no_batch_number(tmp_path):
+    out = tmp_path / "w.pdf"
+    write_pdf(generate_problem_list(count=5, seed=0), out, rows=5, cols=4)
+    assert all("#" not in text for text in _pages(out))
+
+
+def test_cli_batch(tmp_path, capsys):
+    out = tmp_path / "week.pdf"
+    assert main(["--worksheets", "7", "--rows", "10", "--cols", "10", "--seed", "42", "-o", str(out)]) == 0
+    assert len(_pages(out)) == 14
+    err = capsys.readouterr().err
+    assert "7 worksheets (700 problems, 14 pages)" in err
+    assert "worksheets on pages 1-7, answer keys on pages 8-14" in err
+
+
+def test_cli_batch_without_answers(tmp_path, capsys):
+    out = tmp_path / "week.pdf"
+    assert main(["--worksheets", "3", "-n", "20", "--no-answers", "-o", str(out)]) == 0
+    assert len(_pages(out)) == 3
+    assert "answer keys" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--worksheets", "2", "-f", "json"],
+        ["--worksheets", "2"],  # text to stdout
+        ["--worksheets", "0", "-o", "x.pdf"],
+    ],
+)
+def test_cli_batch_errors(argv, tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as exc:
+        main(argv)
+    assert exc.value.code == 2
+    assert "worksheets" in capsys.readouterr().err

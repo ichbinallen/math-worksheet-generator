@@ -63,17 +63,51 @@ def write_pdf(
     ``answers`` is True, answer-key pages with the same grid follow the
     worksheet pages. Returns the total number of pages written.
     """
+    return write_worksheets_pdf(
+        [problems],
+        path,
+        rows=rows,
+        cols=cols,
+        layout=layout,
+        answers=answers,
+        page_size=page_size,
+        title=title,
+        grid_lines=grid_lines,
+    )
+
+
+def write_worksheets_pdf(
+    worksheets: Sequence[Sequence[Problem]],
+    path: str | PathLike[str] | BinaryIO,
+    *,
+    rows: int = 5,
+    cols: int = 4,
+    layout: str = "vertical",
+    answers: bool = True,
+    page_size: str = "letter",
+    title: str = "Math Worksheet",
+    grid_lines: bool = True,
+) -> int:
+    """Write several worksheets to one PDF, so a batch prints as a single job.
+
+    All worksheet pages come first, then (when ``answers`` is True) all the
+    answer keys in the same order, so the printed stack splits into student
+    copies and keys. With more than one worksheet, each is titled
+    ``"<title> #n"`` and gets its own Score field. Each worksheet is laid out
+    exactly as :func:`write_pdf` would lay it out alone. Returns the total
+    number of pages written.
+    """
     if rows < 1 or cols < 1:
         raise ValueError("rows and cols must be at least 1")
     if layout not in LAYOUTS:
         raise ValueError(f"unknown layout: {layout!r} (choose from {', '.join(LAYOUTS)})")
     if page_size not in PAGE_SIZES:
         raise ValueError(f"unknown page size: {page_size!r} (choose from {', '.join(PAGE_SIZES)})")
-    if not problems:
+    if not worksheets or not all(worksheets):
         raise ValueError("no problems to write")
 
     page_w, page_h = PAGE_SIZES[page_size]
-    grid = _Grid(
+    page_grid = _Grid(
         left=MARGIN,
         top=page_h - MARGIN - HEADER_HEIGHT,
         cell_w=(page_w - 2 * MARGIN) / cols,
@@ -81,36 +115,57 @@ def write_pdf(
         rows=rows,
         cols=cols,
     )
-    metrics = _Metrics.measure(problems, layout)
-    font_size = metrics.font_size(grid)
-    if layout == "inline":
-        grid = replace(grid, cell_h=min(grid.cell_h, font_size * _INLINE_ROW))
+    # Lay out every worksheet before creating the file, so one that cannot fit
+    # raises without leaving a partial PDF behind.
+    layouts = [_Layout.fit(problems, page_grid, layout) for problems in worksheets]
 
     per_page = rows * cols
-    sheet_pages = ceil(len(problems) / per_page)
+    sheet_pages = sum(ceil(len(problems) / per_page) for problems in worksheets)
     total_pages = sheet_pages * (2 if answers else 1)
 
     canvas = Canvas(path if not isinstance(path, PathLike) else str(path), pagesize=(page_w, page_h))
     canvas.setTitle(title)
     canvas.setCreator("math-worksheet")
 
+    batch = len(worksheets) > 1
     passes = [False, True] if answers else [False]
     page_no = 0
     for show_answers in passes:
-        for start in range(0, len(problems), per_page):
-            page_no += 1
-            score_total = len(problems) if page_no == 1 else None
-            _draw_header(canvas, page_w, page_h, title, show_answers, score_total)
-            for i, problem in enumerate(problems[start : start + per_page]):
-                x, y = grid.cell_origin(i)
-                if grid_lines:
-                    _draw_cell_border(canvas, x, y, grid)
-                _draw_cell(canvas, problem, start + i + 1, x, y, grid, font_size, metrics, layout, show_answers)
-            _draw_footer(canvas, page_w, page_no, total_pages)
-            canvas.showPage()
+        for n, (problems, sheet) in enumerate(zip(worksheets, layouts), start=1):
+            grid, metrics, font_size = sheet.grid, sheet.metrics, sheet.font_size
+            sheet_title = f"{title} #{n}" if batch else title
+            score_field = f"score_{n}" if batch else "score"
+            for start in range(0, len(problems), per_page):
+                page_no += 1
+                score_total = len(problems) if start == 0 else None
+                _draw_header(canvas, page_w, page_h, sheet_title, show_answers, score_total, score_field)
+                for i, problem in enumerate(problems[start : start + per_page]):
+                    x, y = grid.cell_origin(i)
+                    if grid_lines:
+                        _draw_cell_border(canvas, x, y, grid)
+                    _draw_cell(canvas, problem, start + i + 1, x, y, grid, font_size, metrics, layout, show_answers)
+                _draw_footer(canvas, page_w, page_no, total_pages)
+                canvas.showPage()
 
     canvas.save()
     return total_pages
+
+
+@dataclass(frozen=True)
+class _Layout:
+    """How one worksheet's problems are sized and placed on its pages."""
+
+    grid: "_Grid"
+    metrics: "_Metrics"
+    font_size: float
+
+    @classmethod
+    def fit(cls, problems: Sequence[Problem], grid: "_Grid", layout: str) -> "_Layout":
+        metrics = _Metrics.measure(problems, layout)
+        font_size = metrics.font_size(grid)
+        if layout == "inline":
+            grid = replace(grid, cell_h=min(grid.cell_h, font_size * _INLINE_ROW))
+        return cls(grid, metrics, font_size)
 
 
 @dataclass(frozen=True)
@@ -214,14 +269,20 @@ def _div_width(divisor_w: float, dividend_w: float) -> float:
 
 
 def _draw_header(
-    canvas: Canvas, page_w: float, page_h: float, title: str, answer_key: bool, score_total: int | None
+    canvas: Canvas,
+    page_w: float,
+    page_h: float,
+    title: str,
+    answer_key: bool,
+    score_total: int | None,
+    score_field: str = "score",
 ) -> None:
     top = page_h - MARGIN
     canvas.setFillColor(black)
     canvas.setFont(f"{FONT}-Bold", 18)
     canvas.drawString(MARGIN, top - 18, f"{title} — Answer Key" if answer_key else title)
     if score_total is not None and not answer_key:
-        _draw_score_field(canvas, page_w - MARGIN, top - 18, score_total)
+        _draw_score_field(canvas, page_w - MARGIN, top - 18, score_total, score_field)
     if not answer_key:
         canvas.setFont(FONT, 11)
         y = top - 44
@@ -236,8 +297,12 @@ def _draw_header(
     canvas.setStrokeColor(black)
 
 
-def _draw_score_field(canvas: Canvas, right: float, baseline: float, total: int) -> None:
-    """Right-aligned ``Score: [    ] / total``; the box is a fillable form field."""
+def _draw_score_field(canvas: Canvas, right: float, baseline: float, total: int, name: str = "score") -> None:
+    """Right-aligned ``Score: [    ] / total``; the box is a fillable form field.
+
+    Fields with the same ``name`` share one value, so each worksheet in a
+    batch needs its own.
+    """
     fs = 13
     box_w, box_h = 0.75 * inch, 20
     suffix = f"/ {total}"
@@ -247,7 +312,7 @@ def _draw_score_field(canvas: Canvas, right: float, baseline: float, total: int)
     canvas.drawString(suffix_x, baseline, suffix)
     canvas.drawRightString(box_x - 6, baseline, "Score:")
     canvas.acroForm.textfield(
-        name="score",
+        name=name,
         tooltip="Number of problems answered correctly",
         x=box_x,
         y=baseline - 5,

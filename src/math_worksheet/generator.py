@@ -85,6 +85,31 @@ def generate_problem_list(
     return problems
 
 
+def generate_worksheets(
+    worksheets: int,
+    types: ProblemTypes | None = None,
+    count: int = DEFAULT_COUNT,
+    min_value: int = DEFAULT_MIN,
+    max_value: int = DEFAULT_MAX,
+    allow_negatives: bool = False,
+    seed: int | None = None,
+) -> list[list[Problem]]:
+    """Generate ``worksheets`` independent lists of ``count`` problems each.
+
+    With a ``seed``, worksheet *i* (from 0) uses ``seed + i``, so a batch is
+    reproducible and its first worksheet matches a single worksheet with the
+    same seed.
+    """
+    if worksheets < 1:
+        raise ValueError("worksheets must be at least 1")
+    return [
+        generate_problem_list(
+            types, count, min_value, max_value, allow_negatives, None if seed is None else seed + i
+        )
+        for i in range(worksheets)
+    ]
+
+
 def generate_problems(
     types: ProblemTypes | None = None,
     count: int = DEFAULT_COUNT,

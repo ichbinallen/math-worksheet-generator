@@ -6,6 +6,7 @@ from math_worksheet import (
     Problem,
     generate_problem_list,
     generate_problems,
+    generate_worksheets,
     select_operations,
 )
 
@@ -126,3 +127,16 @@ def test_division_excludes_zero_divisor():
 def test_invalid_args(kwargs):
     with pytest.raises(ValueError):
         generate_problem_list(**kwargs)
+
+
+def test_worksheets_are_reproducible_and_start_with_the_single_seed():
+    sheets = generate_worksheets(3, count=20, seed=42)
+    assert len(sheets) == 3 and all(len(sheet) == 20 for sheet in sheets)
+    assert sheets[0] == generate_problem_list(count=20, seed=42)
+    assert sheets == generate_worksheets(3, count=20, seed=42)
+    assert sheets[0] != sheets[1] != sheets[2]
+
+
+def test_worksheets_must_be_positive():
+    with pytest.raises(ValueError, match="worksheets"):
+        generate_worksheets(0)

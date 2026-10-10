@@ -25,7 +25,7 @@ uv run math-worksheet --add --sub --mul --div --seed 42 -o sheet.txt
 | `--multiplication` / `--mul` | off | include multiplication problems |
 | `--division` / `--div` | off | include division problems |
 | `--min` / `--max` | 0 / 10 | operand range (the difficulty) |
-| `-n/--count` | 100 | number of problems |
+| `-n/--count` | 100 | number of problems (per worksheet) |
 | `--allow-negatives` | off | allow negative operands and answers |
 | `--seed` | random | make the worksheet reproducible |
 | `-f/--format` | `text` | `text`, `json`, `csv`, or `pdf` (inferred from a `.pdf` output name) |
@@ -59,6 +59,7 @@ uv run math-worksheet --add --sub --mul --div --layout inline --rows 10 --cols 3
 | `--page-size` | `letter` | `letter` or `a4` |
 | `--title` | `Math Worksheet` | page heading |
 | `--no-grid` | off | omit the lines separating problems |
+| `--worksheets` | 1 | number of worksheets in the PDF; see [Batches](#batches) |
 
 Each problem sits in its own grid cell. Worksheet pages have a Name/Date line, and
 the first page has a fillable `Score: [   ] / N` box (type into it in a PDF viewer,
@@ -66,6 +67,31 @@ or write in it on paper). Unless `--no-answers` is given, answer-key
 pages with the same grid follow. Font size scales automatically to fit the grid.
 
 From Python: `math_worksheet.pdf.write_pdf(problems, "out.pdf", rows=5, cols=4, layout="vertical")`.
+
+### Batches
+
+To print a week's worth of worksheets at once, use `--worksheets`. Each
+worksheet gets its own problems, and they all go into **one PDF**, so the whole
+batch prints as a single job:
+
+```sh
+uv run math-worksheet --worksheets 7 --rows 10 --cols 10 -o week.pdf
+# Wrote 7 worksheets (700 problems, 14 pages) to week.pdf: worksheets on pages 1-7, answer keys on pages 8-14
+```
+
+All the worksheets come first, then all the answer keys in the same order, so
+the printed stack splits into student copies and keys. To print only the student
+copies, enter the page range the command reports (here `1-7`) in the print
+dialog. Worksheets are titled `Math Worksheet #1`, `#2`, ... and each answer key
+is titled to match (`Math Worksheet #1 — Answer Key`). Each worksheet has its
+own Score box.
+
+`-n/--count` is the number of problems on each worksheet. With `--seed`, the
+batch is reproducible, and worksheet #1 has the same problems as a single
+worksheet with that seed. `--worksheets` works with PDF output only.
+
+Print **single-sided**. Double-sided printing would put worksheet #2 on the
+back of worksheet #1.
 
 ## Library
 
@@ -82,6 +108,11 @@ generate_problems(["multiplication"], count=3)   # a list of types also works
 
 `generate_problem_list(...)` returns `Problem` objects (`left`, `right`, `op`,
 `answer`, `question`) if you need the structured data.
+
+For a batch, `generate_worksheets(7, types, count=100, seed=42)` returns one
+problem list per worksheet, and
+`math_worksheet.pdf.write_worksheets_pdf(worksheets, "week.pdf", rows=10, cols=10)`
+writes them all to one PDF.
 
 ## Development
 
